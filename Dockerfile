@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py cache.py strava.py ./
 COPY templates ./templates
+COPY static ./static
 
 RUN mkdir -p /data/cache && chown -R appuser:appuser /app /data/cache
 
