@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strava Route Downloader</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f4ef;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #5f6b7a;
+      --accent: #fc4c02;
+      --accent-dark: #d94400;
+      --border: #d8dee4;
+      --error: #b42318;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111418;
+        --card: #1a1f24;
+        --text: #f3f4f6;
+        --muted: #9aa4b2;
+        --border: #2d3640;
+        --error: #ff8f85;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, var(--bg), color-mix(in srgb, var(--bg), var(--accent) 8%));
+      color: var(--text);
+      padding: 1.25rem;
+    }
+
+    main {
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 1.5rem;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: 1.75rem;
+      line-height: 1.2;
+    }
+
+    p {
+      margin: 0 0 1.25rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      font: inherit;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 0.9rem 1rem;
+    }
+
+    input,
+    select {
+      background: transparent;
+      color: inherit;
+      margin-bottom: 1rem;
+    }
+
+    button {
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--accent-dark);
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: wait;
+    }
+
+    .status {
+      min-height: 1.25rem;
+      margin-top: 1rem;
+      font-size: 0.95rem;
+    }
+
+    .status.error {
+      color: var(--error);
+    }
+
+    .status.loading {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>Strava Route Downloader</h1>
+      <p>Paste a public Strava route link and download it as GPX, KML, or GeoJSON.</p>
+
+      <form id="convert-form">
+        <label for="url">Strava route URL</label>
+        <input
+          id="url"
+          name="url"
+          type="url"
+          inputmode="url"
+          autocomplete="url"
+          placeholder="https://strava.app.link/..."
+          required
+        >
+
+        <label for="format">Format</label>
+        <select id="format" name="format">
+          <option value="gpx" selected>GPX</option>
+          <option value="kml">KML</option>
+          <option value="geojson">GeoJSON</option>
+        </select>
+
+        <button type="submit" id="submit-btn">Download route</button>
+      </form>
+
+      <div id="status" class="status" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("convert-form");
+    const statusEl = document.getElementById("status");
+    const submitBtn = document.getElementById("submit-btn");
+
+    function setStatus(message, type) {
+      statusEl.textContent = message;
+      statusEl.className = "status" + (type ? " " + type : "");
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      submitBtn.disabled = true;
+      setStatus("Fetching route...", "loading");
+
+      const url = document.getElementById("url").value.trim();
+      const format = document.getElementById("format").value;
+
+      try {
+        const response = await fetch("/api/convert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, format }),
+        });
+
+        if (!response.ok) {
+          let message = "Could not convert route.";
+          try {
+            const data = await response.json();
+            if (data.error) message = data.error;
+          } catch (_) {}
+          setStatus(message, "error");
+          return;
+        }
+
+        const blob = await response.blob();
+        const filename = `route.${format}`;
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
+        setStatus("Download started.");
+      } catch (_) {
+        setStatus("Network error. Please try again.", "error");
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

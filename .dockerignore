@@ -1,0 +1,11 @@
+.git
+.gitattributes
+.vscode
+__pycache__
+*.pyc
+*.pyo
+.cache
+cache
+.env
+*.har
+README.md
