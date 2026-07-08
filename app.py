@@ -50,6 +50,8 @@ def convert():
         return jsonify({"error": str(exc)}), 422
     except FetchError as exc:
         return jsonify({"error": str(exc)}), 502
+    except Exception:
+        return jsonify({"error": "Unexpected server error."}), 500
 
     response = make_response(content)
     response.headers["Content-Type"] = mime_type

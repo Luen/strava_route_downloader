@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import html
 import ipaddress
 import json
@@ -83,12 +84,13 @@ def _is_private_ip(address: str) -> bool:
     )
 
 
-def _resolve_host_ips(hostname: str) -> list[str]:
+@functools.lru_cache(maxsize=64)
+def _resolve_host_ips(hostname: str) -> tuple[str, ...]:
     try:
         infos = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise FetchError("Could not resolve host.") from exc
-    return [info[4][0] for info in infos]
+    return tuple(info[4][0] for info in infos)
 
 
 def _assert_safe_host(hostname: str) -> None:
@@ -126,14 +128,12 @@ def safe_get(url: str) -> tuple[str, str]:
                     headers=_request_headers(),
                     timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
                     allow_redirects=False,
-                    stream=True,
                 )
             except requests.RequestException as exc:
                 raise FetchError("Failed to fetch Strava page.") from exc
 
             if response.status_code in {301, 302, 303, 307, 308}:
                 location = response.headers.get("Location")
-                response.close()
                 if not location:
                     raise FetchError("Redirect missing location header.")
                 if redirects >= MAX_REDIRECTS:
@@ -143,23 +143,13 @@ def safe_get(url: str) -> tuple[str, str]:
                 continue
 
             if response.status_code not in {200, 404}:
-                response.close()
                 raise FetchError(f"Strava returned HTTP {response.status_code}.")
 
-            chunks: list[bytes] = []
-            total = 0
-            try:
-                for chunk in response.iter_content(chunk_size=65536):
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > MAX_RESPONSE_BYTES:
-                        raise FetchError("Response too large.")
-                    chunks.append(chunk)
-            finally:
-                response.close()
+            content = response.content
+            if len(content) > MAX_RESPONSE_BYTES:
+                raise FetchError("Response too large.")
 
-    return current, b"".join(chunks).decode("utf-8", errors="replace")
+    return current, content.decode("utf-8", errors="replace")
 
 
 def extract_route_id(slug: str) -> str:
