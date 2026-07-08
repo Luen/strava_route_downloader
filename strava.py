@@ -148,6 +148,7 @@ def safe_get(url: str) -> tuple[str, str]:
             content = response.content
             if len(content) > MAX_RESPONSE_BYTES:
                 raise FetchError("Response too large.")
+            break
 
     return current, content.decode("utf-8", errors="replace")
 
