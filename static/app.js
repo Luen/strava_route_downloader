@@ -7,6 +7,13 @@ function setStatus(message, type) {
   statusEl.className = "status" + (type ? " " + type : "");
 }
 
+function filenameFromDisposition(header, fallback) {
+  const match = /filename="([^"]+)"/i.exec(header || "");
+  const raw = match ? match[1] : fallback;
+  const base = raw.split(/[\\/]/).pop() || fallback;
+  return base.replace(/[^\w.\-]+/g, "_").slice(0, 120) || fallback;
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   submitBtn.disabled = true;
@@ -33,7 +40,10 @@ form.addEventListener("submit", async (event) => {
     }
 
     const blob = await response.blob();
-    const filename = `route.${format}`;
+    const filename = filenameFromDisposition(
+      response.headers.get("Content-Disposition"),
+      `route.${format}`
+    );
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = objectUrl;
