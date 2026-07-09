@@ -8,7 +8,7 @@ Paste a public Strava route link and download it as GPX, KML, or GeoJSON.
 docker compose up --build
 ```
 
-Open http://localhost:8000
+Open http://localhost:7650
 
 ## Local development
 
