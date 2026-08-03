@@ -8,12 +8,19 @@ from typing import Any, Optional
 CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
 NEGATIVE_CACHE_TTL_SECONDS = 24 * 60 * 60
 
+# Map allowed CACHE_DIR values to literal paths so env input never reaches Path().
+_CACHE_DIR_BY_CONFIG = {
+    "./cache": Path("./cache"),
+    "cache": Path("./cache"),
+    "/data/cache": Path("/data/cache"),
+}
+
 
 def _cache_dir() -> Path:
     raw = os.environ.get("CACHE_DIR", "./cache")
-    if ".." in raw or "\0" in raw:
+    path = _CACHE_DIR_BY_CONFIG.get(raw)
+    if path is None:
         raise ValueError("Invalid CACHE_DIR")
-    path = Path(raw).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
