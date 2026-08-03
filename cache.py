@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+NEGATIVE_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 
 def _cache_dir() -> Path:

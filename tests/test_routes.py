@@ -47,7 +47,9 @@ def test_private_route_requires_cookies(url: str, monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("STRAVA_COOKIES_FILE", raising=False)
     # Bypass disk cache so we exercise the anonymous fetch path.
     monkeypatch.setattr(strava.cache, "get", lambda _key: None)
-    monkeypatch.setattr(strava.cache, "set", lambda _key, _value: None)
+    monkeypatch.setattr(
+        strava.cache, "set", lambda _key, _value, ttl_seconds=None: None
+    )
 
     with pytest.raises(strava.AuthRequiredError):
         strava.convert_route(url, "gpx")

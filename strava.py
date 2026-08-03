@@ -166,9 +166,10 @@ def _apply_cookies(session: requests.Session, cookies: dict[str, str]) -> None:
         session.cookies.set(name, value, domain=".strava.com")
 
 
-def safe_get(url: str, cookies: dict[str, str] | None = None) -> tuple[str, str]:
+def safe_get(url: str, cookies: dict[str, str] | None = None) -> tuple[str, str, int]:
     current = url
     redirects = 0
+    status_code = 0
 
     with requests.Session() as session:
         if cookies:
@@ -210,9 +211,10 @@ def safe_get(url: str, cookies: dict[str, str] | None = None) -> tuple[str, str]
             content = response.content
             if len(content) > MAX_RESPONSE_BYTES:
                 raise FetchError("Response too large.")
+            status_code = response.status_code
             break
 
-    return current, content.decode("utf-8", errors="replace")
+    return current, content.decode("utf-8", errors="replace"), status_code
 
 
 def extract_route_id(slug: str) -> str:
@@ -260,6 +262,50 @@ def _route_cache_key(route_id: str) -> str:
     return f"route:{route_id}"
 
 
+CACHE_ERROR_KEY = "__cache_error__"
+
+
+def _is_negative_cache(value: Any) -> bool:
+    return isinstance(value, dict) and value.get(CACHE_ERROR_KEY) is True
+
+
+def _negative_cache_entry(
+    exc: ParseError,
+    *,
+    auth_attempted: bool,
+) -> dict[str, Any]:
+    error_type = "AuthRequiredError" if isinstance(exc, AuthRequiredError) else "ParseError"
+    return {
+        CACHE_ERROR_KEY: True,
+        "error_type": error_type,
+        "message": str(exc),
+        "auth_attempted": auth_attempted,
+    }
+
+
+def _raise_from_negative_cache(entry: dict[str, Any]) -> None:
+    message = entry.get("message") or PRIVATE_ROUTE_MESSAGE
+    if entry.get("error_type") == "AuthRequiredError":
+        raise AuthRequiredError(message)
+    raise ParseError(message)
+
+
+def _cache_http_200_failure(
+    cache_key: str,
+    status_code: int,
+    exc: ParseError,
+    *,
+    auth_attempted: bool,
+) -> None:
+    if status_code != 200:
+        return
+    cache.set(
+        cache_key,
+        _negative_cache_entry(exc, auth_attempted=auth_attempted),
+        ttl_seconds=cache.NEGATIVE_CACHE_TTL_SECONDS,
+    )
+
+
 def resolve_short_link(url: str) -> str:
     _validate_url(url)
     parsed = urlparse(url)
@@ -271,7 +317,7 @@ def resolve_short_link(url: str) -> str:
     if cached:
         return cached
 
-    final_url, html_body = safe_get(url)
+    final_url, html_body, _status = safe_get(url)
     try:
         canonical = canonicalize_route_url(final_url)
     except ValidationError:
@@ -347,21 +393,49 @@ def fetch_route_data(canonical_url: str) -> dict[str, Any]:
     cache_key = _route_cache_key(route_id)
 
     cached = cache.get(cache_key)
-    if cached:
-        return cached
+    if cached is not None:
+        if not _is_negative_cache(cached):
+            return cached
 
-    _, html_body = safe_get(canonical)
+        # Auth failures recorded before cookies existed can be retried once cookies appear.
+        if (
+            cached.get("error_type") == "AuthRequiredError"
+            and not cached.get("auth_attempted")
+            and load_strava_cookies()
+        ):
+            pass
+        else:
+            _raise_from_negative_cache(cached)
+
+    _, html_body, status_code = safe_get(canonical)
     try:
         route_data = extract_route(html_body)
-    except AuthRequiredError:
+    except AuthRequiredError as auth_exc:
         cookies = load_strava_cookies()
         if not cookies:
+            _cache_http_200_failure(
+                cache_key, status_code, auth_exc, auth_attempted=False
+            )
             raise
-        _, html_body = safe_get(canonical, cookies=cookies)
+        _, html_body, status_code = safe_get(canonical, cookies=cookies)
         try:
             route_data = extract_route(html_body)
-        except AuthRequiredError as exc:
-            raise AuthRequiredError(AUTH_FAILED_MESSAGE) from exc
+        except AuthRequiredError as retry_exc:
+            failure = AuthRequiredError(AUTH_FAILED_MESSAGE)
+            _cache_http_200_failure(
+                cache_key, status_code, failure, auth_attempted=True
+            )
+            raise failure from retry_exc
+        except ParseError as parse_exc:
+            _cache_http_200_failure(
+                cache_key, status_code, parse_exc, auth_attempted=True
+            )
+            raise
+    except ParseError as parse_exc:
+        _cache_http_200_failure(
+            cache_key, status_code, parse_exc, auth_attempted=False
+        )
+        raise
 
     cache.set(cache_key, route_data)
     return route_data

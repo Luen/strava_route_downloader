@@ -79,4 +79,5 @@ Without `STRAVA_COOKIES_FILE`, public-route tests still run; private-route tests
 - Strava **route** URLs are supported (`strava.app.link` short links and `strava.com/routes/...`).
 - Public routes work without cookies; private routes need `STRAVA_COOKIES_FILE` and an account that can view them.
 - Route data is cached on disk for 7 days to reduce repeat requests to Strava.
+- HTTP 200 responses that still fail to parse (missing/invalid route HTML) are negative-cached for 24 hours so a broken page structure is not re-fetched on every request. Auth failures without cookies are also remembered for 24 hours, but will be retried if cookies are added later.
 - Activity URLs are not supported.
