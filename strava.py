@@ -4,8 +4,10 @@ import functools
 import html
 import ipaddress
 import json
+import os
 import re
 import socket
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -23,6 +25,14 @@ MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 20
 MAX_REDIRECTS = 5
+PRIVATE_ROUTE_MESSAGE = (
+    "This route could not be found. It may be private, deleted, or unsupported."
+)
+NO_POLYLINE_MESSAGE = "Route has no GPS data. It may be private or unsupported."
+AUTH_FAILED_MESSAGE = (
+    "This route appears private and could not be loaded with the configured "
+    "session cookies. Export fresh cookies or check that your account can view it."
+)
 
 ROUTE_PATH_RE = re.compile(r"^/routes/[^/]+/?$")
 ROUTE_ID_RE = re.compile(r"_(\d+)(?:/)?$")
@@ -47,6 +57,10 @@ class FetchError(StravaError):
 
 class ParseError(StravaError):
     pass
+
+
+class AuthRequiredError(ParseError):
+    """Route page loaded but route/polyline is missing — may need a logged-in session."""
 
 
 def _normalize_input_url(url: str) -> str:
@@ -107,11 +121,59 @@ def _request_headers() -> dict[str, str]:
     }
 
 
-def safe_get(url: str) -> tuple[str, str]:
+def _add_cookie(cookies: dict[str, str], name: Any, value: Any) -> None:
+    if isinstance(name, str) and isinstance(value, str) and name:
+        cookies[name] = value
+
+
+def load_strava_cookies() -> dict[str, str] | None:
+    """Load session cookies from STRAVA_COOKIES_FILE (strava-cookie-exporter JSON)."""
+    path = os.environ.get("STRAVA_COOKIES_FILE", "").strip()
+    if not path:
+        return None
+
+    try:
+        cookie_path = Path(path).expanduser().resolve(strict=True)
+    except OSError:
+        return None
+
+    if not cookie_path.is_file():
+        return None
+
+    try:
+        with cookie_path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    cookies: dict[str, str] = {}
+    if isinstance(payload, list):
+        for entry in payload:
+            if isinstance(entry, dict):
+                _add_cookie(cookies, entry.get("name"), entry.get("value"))
+    elif isinstance(payload, dict):
+        for name, value in payload.items():
+            if isinstance(value, str):
+                _add_cookie(cookies, name, value)
+            elif isinstance(value, dict):
+                _add_cookie(cookies, value.get("name", name), value.get("value"))
+
+    return cookies or None
+
+
+def _apply_cookies(session: requests.Session, cookies: dict[str, str]) -> None:
+    for name, value in cookies.items():
+        session.cookies.set(name, value, domain=".strava.com")
+
+
+def safe_get(url: str, cookies: dict[str, str] | None = None) -> tuple[str, str]:
     current = url
     redirects = 0
 
     with requests.Session() as session:
+        if cookies:
+            _apply_cookies(session, cookies)
+
         while True:
             parsed = urlparse(current)
             if parsed.scheme != "https":
@@ -264,13 +326,11 @@ def extract_route(html_body: str) -> dict[str, Any]:
 
     route = payload.get("props", {}).get("pageProps", {}).get("route")
     if not route:
-        raise ParseError(
-            "This route could not be found. It may be private, deleted, or unsupported."
-        )
+        raise AuthRequiredError(PRIVATE_ROUTE_MESSAGE)
 
     polyline = route.get("polyline")
     if not polyline:
-        raise ParseError("Route has no GPS data. It may be private or unsupported.")
+        raise AuthRequiredError(NO_POLYLINE_MESSAGE)
 
     return {
         "title": route.get("title") or "strava-route",
@@ -290,8 +350,19 @@ def fetch_route_data(canonical_url: str) -> dict[str, Any]:
     if cached:
         return cached
 
-    final_url, html_body = safe_get(canonical)
-    route_data = extract_route(html_body)
+    _, html_body = safe_get(canonical)
+    try:
+        route_data = extract_route(html_body)
+    except AuthRequiredError:
+        cookies = load_strava_cookies()
+        if not cookies:
+            raise
+        _, html_body = safe_get(canonical, cookies=cookies)
+        try:
+            route_data = extract_route(html_body)
+        except AuthRequiredError as exc:
+            raise AuthRequiredError(AUTH_FAILED_MESSAGE) from exc
+
     cache.set(cache_key, route_data)
     return route_data
 

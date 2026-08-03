@@ -6,8 +6,10 @@ services:
     restart: unless-stopped
     environment:
       CACHE_DIR: /data/cache
+      STRAVA_COOKIES_FILE: /run/secrets/strava-cookies/strava-cookies.json
     volumes:
       - strava-cache:/data/cache
+      - ${STRAVA_COOKIES_DIR:-./strava-cookies}:/run/secrets/strava-cookies:ro
     read_only: true
     tmpfs:
       - /tmp

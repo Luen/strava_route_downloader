@@ -5,7 +5,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 import strava
-from strava import FetchError, ParseError, ValidationError
+from strava import AuthRequiredError, FetchError, ParseError, ValidationError
 
 app = Flask(__name__)
 limiter = Limiter(
@@ -49,6 +49,8 @@ def convert():
         content, filename, mime_type = strava.convert_route(url, output_format)
     except ValidationError as exc:
         return jsonify({"error": str(exc)}), 400
+    except AuthRequiredError as exc:
+        return jsonify({"error": str(exc)}), 422
     except ParseError as exc:
         return jsonify({"error": str(exc)}), 422
     except FetchError as exc:
