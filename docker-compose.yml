@@ -1,5 +1,6 @@
 services:
   web:
+    image: ghcr.io/luen/strava_route_downloader:latest
     build: .
     ports:
       - "7650:8000"
